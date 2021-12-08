@@ -1,0 +1,20 @@
+batch_size: 32
+env: CartPole-v1
+experience_replay: prioritized
+explo: 0.05
+featExtractor: !!python/name:core.NothingToDo ''
+freqOptim: 1
+freqSave: 1000
+freqTest: 10
+freqVerbose: 10
+freq_target: 1001
+fromFile: null
+gamma: 0.9999
+lr: 0.001
+maxLengthTest: 500
+maxLengthTrain: 100
+mem_size: 10000
+nbEpisodes: 1000000
+nbTest: 1
+seed: 5
+target_network: true
