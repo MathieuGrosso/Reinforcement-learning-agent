@@ -1,4 +1,4 @@
-env: LunarLander-v2                                                  # environnement
+env: CartPole-v1                                                  # environnement
 seed: 5
 featExtractor: !!python/name:__main__.NothingToDo ''
 freqSave: 1000
@@ -11,14 +11,15 @@ nbEpisodes: 1000000
 maxLengthTest: 500                                                                    # Longueur maxi des trajectoires en Test
 maxLengthTrain: 300 
 batch_size : 5
-lr_actor : 0.0001
-lr_critic : 0.0001
+lr_actor : 0.001
+lr_critic : 0.003
 epochs : 4
-gamma : 0.98
+gamma : 0.99
+K : 20
 reverse : False
 tau: 0.95
 epsilon : 1
 beta_k : 3
 delta: 0.03
-eps_clipped : 0.01
-freqOptim: 64
+eps_clipped : 0.2
+freqOptim: 20  
