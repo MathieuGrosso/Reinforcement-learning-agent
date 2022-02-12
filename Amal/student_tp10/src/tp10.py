@@ -1,10 +1,13 @@
 
+from cgi import test
 import math
 import click
 from torch.utils.tensorboard import SummaryWriter
 import logging
+
 from typing import Optional
 import re
+from icecream import ic
 import datetime
 from pathlib import Path
 from tqdm import tqdm
@@ -14,10 +17,17 @@ import os
 from torch import optim
 from datamaestro import prepare_dataset
 import torch.nn.functional as F
+import pytorch_lightning as pl
 import torch
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
+from omegaconf import OmegaConf
 import torch.nn as nn
 from utils import PositionalEncoding
 from torch.utils.data import Dataset, DataLoader
+from Lightning_utils import LightningNetwork
+
+
 from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -99,125 +109,6 @@ class MLP(nn.Module):
 
 
 
-class training_global(nn.Module): 
-    def __init__(self,criterion,device,opt,weight_decay,regularization=None,ckpt_save_path=None):
-        super().__init__()
-        self.criterion = criterion
-        self.device = device
-        self.regularization = regularization
-        self.optimizer = opt
-        self.state={}
-        self.ckpt_save_path= ckpt_save_path
-        self.weight_decay = weight_decay
-
-    
-    def __train_test_epoch(self,traindata,testdata,epoch):
-        epoch_train_loss = 0
-        epoch_train_acc  = 0 
-        epoch_test_loss  = 0
-        epoch_test_acc   = 0 
-        for idx, data in enumerate(traindata):
-            self.opt.zero_grad()
-            input,lens,label = data            
-            # input = input.reshape(-1,self.input_size)
-            b_size,n_features = input.shape
-            output = self(input) # self c'est le modèle
-            loss = self.criterion(output,label)
-            n_correct = (torch.argmax(output,dim=1)==label).sum().item()
-            total     = label.size(0)
-            epoch_train_acc += n_correct/total
-            loss.backward()
-            self.opt.step()
-            epoch_train_loss += loss.item()
-
-        with torch.no_grad():
-            for idx, data in enumerate(testdata):
-                input,lens,label = data
-     
-                b_size,n_features = input.shape
-                output = self(input) # self c'est le modèle
-                loss = self.criterion(output,label)
-                n_correct = (torch.argmax(output,dim=1)==label).sum().item()
-                total     = label.size(0)
-                epoch_test_acc += n_correct/total
-                epoch_test_loss += loss.item()
-        
-        return epoch_train_loss/len(traindata),epoch_train_acc/len(traindata),epoch_test_loss/len(testdata),epoch_test_acc/len(testdata)
-
-    def __weights_histo(self,epoch):
-        for name, param in self.named_parameters(): 
-            writer.add_histogram(name, param, global_step=epoch, bins='tensorflow')
-
-    def __validate(self, dataloader,epoch):
-        epoch_loss = 0
-        epoch_acc  = 0
-        # ic(len(dataloader))
-        for idx, data in enumerate(dataloader):
-            self.opt.zero_grad()
-            input,label = data
-            
-            # input = input.reshape(-1,self.input_size)
-            b_size,n_features = input.shape
-  
-            output = self(input) # self c'est le modèle
-            loss = self.criterion(output,label)
-            n_correct = (torch.argmax(output,dim=1)==label).sum().item()
-            total     = label.size(0)
-            epoch_acc += n_correct/total
-            epoch_loss += loss.item()
-
-            writer.add_scalar('Loss/train_idx',loss,idx)
-            
-        return epoch_loss/len(dataloader), epoch_acc/len(dataloader)
-
-
-    def fit(self, traindata,testdata,validation_data=None,batch_size=300, start_epoch=0, n_epochs=1000, lr=0.001, verbose=10,ckpt=None):
-        # ic(lr)
-        
-        parameters = self.parameters()
-        if self.optimizer=="SGD":
-            self.opt = optim.SGD(parameters,lr=lr,momentum=0.9)
-        if self.optimizer=='Adam':
-            self.opt = torch.optim.Adam(parameters, lr=lr, weight_decay=self.weight_decay, amsgrad=False)
-        start_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        
-      
-
-        if ckpt:
-            state = torch.load(ckpt)
-            start_epoch = state['epoch']
-            self.load_state_dict(state['state_dict'])
-            for g in self.opt.param_groups:
-                g['lr'] = state['lr']
-            
-        for epoch in range(start_epoch,n_epochs):
-            epoch_train_loss,epoch_train_acc,epoch_test_loss,epoch_test_acc = self.__train_test_epoch(traindata,testdata,epoch)
-            print(f'\n Epoch {epoch+1} \n',
-                        f'Train Loss= {epoch_train_loss:.4f}\n',f'Train Acc={epoch_train_acc:.4f}\n',f'test Loss= {epoch_test_loss:.4f}\n',f'Test Acc={epoch_test_acc:.4f}\n')
-            
-            
-            writer.add_scalar('Loss/train', epoch_train_loss, epoch)
-            writer.add_scalar('Loss/test',epoch_test_loss,epoch)
-            writer.add_scalar('Acc/train',epoch_train_acc,epoch)
-            writer.add_scalar('Acc/test',epoch_test_acc,epoch)
-            if epoch % 10 ==0 : 
-                self.__weights_histo(epoch) #using weight histograms to have the weights of each linear layer. 
-            if validation_data is not None:
-                with torch.no_grad():
-                    val_loss, val_acc = self.__validate(validation_data,epoch)
-                print('Epoch {:2d} loss_val: {:1.4f}  val_acc: {:1.4f} '.format(epoch+1, val_loss, val_acc))
-                writer.add_scalar('Loss/val',val_loss,epoch)
-                writer.add_scalar("Acc/val",val_acc,epoch)
-
-
-            if self.ckpt_save_path:
-                self.state['lr'] = lr
-                self.state['epoch'] = epoch
-                self.state['state_dict'] = self.state_dict()
-                if not os.path.exists(self.ckpt_save_path):
-                    os.mkdir(self.ckpt_save_path)
-                torch.save(self.state, os.path.join(self.ckpt_save_path, f'ckpt_{start_time}_epoch{epoch}.ckpt'))
-
 
 class ScaledDotProductAttention(nn.Module):
     ''' Scaled Dot-Product Attention '''
@@ -234,19 +125,19 @@ class ScaledDotProductAttention(nn.Module):
         values : output of the attention layers
         attention : attention weight"""
         d = q.size()[-1] #emb_di
-        attent_logits = torch.matmul(q,k.transpose(-2,-1))  #
+        attent_logits = torch.bmm(q,k.transpose(-2,-1))  #
         attent_logits = attent_logits/math.sqrt(d)
         if mask is not None : 
             attent_logits = attent_logits.masked_fill(mask ==0 ,-1e9)
         attention = F.softmax(attent_logits,dim=-1)
 
         attention = self.dropout(F.softmax(attention, dim=-1)) 
-        output = torch.matmul(attention, v) 
+        output = torch.bmm(attention, v) 
         return output,attention
 
-class SimpleNet(training_global):
-    def __init__(self,weights_embeddings,dim_h,criterion,device,opt,ckpt_save_path=None,weight_decay=0):
-        super(SimpleNet,self).__init__(criterion = criterion,device = device,opt = opt,ckpt_save_path= ckpt_save_path,weight_decay=weight_decay)
+class SimpleNet(nn.Module):
+    def __init__(self,weights_embeddings,dim_h):
+        super(SimpleNet,self).__init__()
         weights_embeddings = torch.Tensor(weights_embeddings)
         _, dim_emb = weights_embeddings.shape
         self.embedded   = nn.Embedding.from_pretrained(weights_embeddings) #mettre une liste
@@ -261,9 +152,9 @@ class SimpleNet(training_global):
         return logits
 
 
-class QueryNet(training_global):
-    def __init__(self,weights_embeddings,dim_h,criterion,device,opt,ckpt_save_path=None,weight_decay=0):
-        super(QueryNet,self).__init__(criterion = criterion,device = device,opt = opt,ckpt_save_path= ckpt_save_path,weight_decay=weight_decay)
+class QueryNet(nn.Module):
+    def __init__(self,weights_embeddings,dim_h):
+        super(QueryNet,self).__init__()
         weights_embeddings = torch.Tensor(weights_embeddings)
         _, dim_emb = weights_embeddings.shape
         self.embedded   = nn.Embedding.from_pretrained(weights_embeddings) #mettre une liste
@@ -288,42 +179,47 @@ class QueryNet(training_global):
 
 
 
-class OneHeadAttention(nn.Module): 
-    def __init__(self,embedding_dim,dim_out):
-        super(OneHeadAttention,self).__init__()
-        self.query = nn.Linear(embedding_dim,dim_out)
-        self.value = nn.Linear(embedding_dim,dim_out)
-        self.key   = nn.Linear(embedding_dim,dim_out)
-        self.linear = nn.Sequential(
-            nn.Linear(dim_out,dim_out),
-            nn.ReLU()
-            )
-        self.scaleproduct = ScaledDotProductAttention()
 
-    def forward(self,x):
-        q = self.query(x)
-        v = self.value(x)
-        k = self.key(x)
-        output, attention = self.scaleproduct(q,v,k)
-        output = self.linear(output)
-        # output = F.relu(output)
-        return output
+class OneHeadAttention(nn.Module):
+    def __init__(self,
+                 qk_dim,
+                 v_dim,
+                 embedding_dim,
+                 out_dim
+                 ) -> None:
+        super().__init__()
+        self.linear_q = nn.Linear(embedding_dim, qk_dim)
+        self.linear_v = nn.Linear(embedding_dim, v_dim)
+        self.linear_k = nn.Linear(embedding_dim, qk_dim)
+        self.linear_o = nn.Linear(v_dim, out_dim)
+        self.dotproduct = ScaledDotProductAttention()
+
+    def forward(self, x):
+        q = self.linear_q(x)    # (batch_size, length, qk_dim)
+        v = self.linear_v(x)    # (batch_size, length, v_dim)
+        k = self.linear_k(x)      # (batch_size, length, qk_dim)
+        out, attention = self.dotproduct(q, k, v)
+        out = self.linear_o(out)
+        out = F.relu(out)
+
+        return out
 
 
-class BasicSelfAttentionModel(training_global):
+class BasicSelfAttentionModel(nn.Module):
     """simple self attention model """
-    def __init__(self,weights_embeddings,criterion,device,opt,ckpt_save_path=None,weight_decay=0):
-        super(BasicSelfAttentionModel,self).__init__(criterion = criterion,device = device,opt = opt,ckpt_save_path= ckpt_save_path,weight_decay=weight_decay)
+    def __init__(self,qk_dim,v_dim,out_dim,dim_emb,class_dim,weights_embeddings):
+        super(BasicSelfAttentionModel,self).__init__()
         weights_embeddings = torch.Tensor(weights_embeddings)
-        _, dim_emb = weights_embeddings.shape
+        # _, dim_emb = weights_embeddings.shape
+        dim_emb = dim_emb
         self.embedded        = nn.Embedding.from_pretrained(weights_embeddings)
-        self.selfattention1  = OneHeadAttention(dim_emb,dim_emb)
-        self.ln1             = nn.LayerNorm(dim_emb)
-        self.selfattention2  = OneHeadAttention(dim_emb,dim_emb)
-        self.ln2             = nn.LayerNorm(dim_emb)
-        self.selfattention3  = OneHeadAttention(dim_emb,dim_emb)
-        self.ln3             = nn.LayerNorm(dim_emb)
-        self.classifier      = nn.Linear(dim_emb,2)
+        self.selfattention1  = OneHeadAttention(qk_dim,v_dim,dim_emb,out_dim)
+        self.ln1             = nn.LayerNorm(out_dim)
+        self.selfattention2  = OneHeadAttention(qk_dim,v_dim,dim_emb,out_dim)
+        self.ln2             = nn.LayerNorm(out_dim)
+        self.selfattention3  = OneHeadAttention(qk_dim,v_dim,dim_emb,out_dim)
+        self.ln3             = nn.LayerNorm(out_dim)
+        self.classifier      = nn.Linear(out_dim,class_dim)
         
     def forward(self,x):
         emb = self.embedded(x)
@@ -336,43 +232,45 @@ class BasicSelfAttentionModel(training_global):
         out = out.mean(dim=1)
         out = self.classifier(out)
         return out 
-        
 
-class SelfAttentionModel(training_global):
+
+class SelfAttentionModel(nn.Module):
     "residual + (optional)CLS token + positional encoding self attention model"
-    def __init__(self,weights_embeddings,pad_idx,criterion,device,opt,ckpt_save_path=None,weight_decay=0,  use_cls = None) -> None:
-        super(SelfAttentionModel,self).__init__(criterion = criterion,device = device,opt = opt,ckpt_save_path= ckpt_save_path,weight_decay=weight_decay)
+    def __init__(self,qk_dim,v_dim,out_dim,class_dim,dim_emb,max_len,weights_embeddings,pad_idx,  use_cls = None) -> None:
+        super(SelfAttentionModel,self).__init__()
         weights_embeddings = torch.Tensor(weights_embeddings)
-        _, dim_emb = weights_embeddings.shape
+        # _, dim_emb = weights_embeddings.shape
+        dim_emb = dim_emb
         self.pad_idx = pad_idx
         self.cls_idx = pad_idx + 1 
         self.embedded        = nn.Embedding.from_pretrained(weights_embeddings,padding_idx = self.pad_idx)
-        self.selfattention1  = OneHeadAttention(dim_emb,dim_emb)
-        self.ln1             = nn.LayerNorm(dim_emb)
-        self.selfattention2  = OneHeadAttention(dim_emb,dim_emb)
-        self.ln2             = nn.LayerNorm(dim_emb)
-        self.selfattention3  = OneHeadAttention(dim_emb,dim_emb)
-        self.ln3             = nn.LayerNorm(dim_emb) 
-        self.pos_enc = PositionalEncoding(dim_emb)  
-        self.classifier      = nn.Linear(dim_emb,2)
+        self.selfattention1  = OneHeadAttention(qk_dim,v_dim,dim_emb,out_dim)
+        self.ln1             = nn.LayerNorm(out_dim)
+        self.selfattention2  = OneHeadAttention(qk_dim,v_dim,dim_emb,out_dim)
+        self.ln2             = nn.LayerNorm(out_dim)
+        self.selfattention3  = OneHeadAttention(qk_dim,v_dim,dim_emb,out_dim)
+        self.ln3             = nn.LayerNorm(out_dim)
+        self.pos_enc = PositionalEncoding(dim_emb,max_len=max_len)  
+        self.classifier      = nn.Linear(out_dim,class_dim)
         self.use_cls = use_cls if not None else None 
         if self.use_cls is not None : 
-            print("works a bit")
+
             self.linear_cls = nn.Linear(dim_emb, dim_emb)
         
 
     def forward(self,x): 
         if self.use_cls is not None:
-            print('work twice')
+
             batch_size, _ = x.size()
             cls_token = (torch.ones(batch_size,1) * self.cls_idx).long().to(x.device)
             input = torch.cat([cls_token, x], dim=1)
         emb = self.embedded(x)
         if self.use_cls:
-            print("works !!")
+     
             emb[:, 0,:] = self.linear_cls(torch.ones_like(emb[:, 0,:]).to(emb.device))
         emb = self.pos_enc(emb)
         att1 = self.selfattention1(emb)
+  
         out1 = self.ln1(emb + att1)
         att2 = self.selfattention2(out1)
         out2 = out1 + att2
@@ -387,15 +285,88 @@ class SelfAttentionModel(training_global):
 
 
 
+        
+class ResidualEncoder(nn.Module):
+    def __init__(self,
+                 qk_dim,
+                 v_dim,
+                 embedding_dim,
+                 out_dim,
+                 class_dim,
+                 dropout_prob,
+                 use_cls = False) -> None:
+        super().__init__()
+        self.use_cls = use_cls
+        self.transformer1 = OneHeadAttention(qk_dim, v_dim, embedding_dim, out_dim)
+        self.layernorm1 = nn.LayerNorm(out_dim)
+        self.transformer2 = OneHeadAttention(qk_dim, v_dim, embedding_dim, out_dim)
+        self.layernorm2 = nn.LayerNorm(out_dim)
+        self.transformer3 = OneHeadAttention(qk_dim, v_dim, embedding_dim, out_dim)
+        self.layernorm3 = nn.LayerNorm(out_dim)
+        self.classif = nn.Linear(out_dim, class_dim)
+        self.dropout = nn.Dropout(dropout_prob)
+     
 
+    def forward(self, x):
+        x = self.layernorm1(x + self.dropout(self.transformer1(x)))
+        x = self.layernorm2(x + self.dropout(self.transformer2(x)))
+        x = self.layernorm3(x + self.dropout(self.transformer3(x)))
+        if self.use_cls:
+            x = x[:, 0, :]
+        else:
+            x = x.mean(dim=1)
+        x = self.classif(x)
+        return x
 
-@click.command()
-@click.option('--test-iterations', default=1000, type=int, help='Number of training iterations (batches) before testing')
-@click.option('--epochs', default=50, help='Number of epochs.')
-@click.option('--modeltype', required=True, type=int, help="0: base, 1 : Attention1, 2: Attention2")
-@click.option('--emb-size', default=100, help='embeddings size')
-@click.option('--batch-size', default=20, help='batch size')
+class AdvancedResEncoder(nn.Module):
+    def __init__(self,
+                 qk_dim,
+                 v_dim,
+                 embedding_w,
+                 emb_freeze,
+                 pad_idx,
+                 out_dim,
+                 class_dim,
+                 dropout_prob,
+                 max_len,
+                 use_cls: Optional[bool] = None) -> None:
+        super().__init__()
+        dictionnary_size, embedding_dim = embedding_w.shape
+        embedding_w = torch.tensor(embedding_w).float()
+        dictionnary_size, embedding_dim = embedding_w.shape
+        self.pad_idx = pad_idx
+        self.cls_idx = pad_idx + 1 # we added cls_idx after pad_idx
+        self.use_cls = use_cls
+        self.embedding = nn.Embedding.from_pretrained(embeddings=embedding_w, padding_idx = self.pad_idx, freeze=emb_freeze)
+        self.l3encoder = ResidualEncoder(qk_dim, v_dim, embedding_dim, out_dim, class_dim, dropout_prob, use_cls=use_cls)
+        self.pos_emb = PositionalEncoding(embedding_dim, max_len=max_len)
+        self.layernorm0 = nn.LayerNorm(embedding_dim)
+        if self.use_cls:
+            self.linear_cls = nn.Linear(embedding_dim, embedding_dim)
+
+    def forward(self, input):
+        if self.use_cls:
+            batch_size, _ = input.size()
+            cls_token = (torch.ones(batch_size,1) * self.cls_idx).long().to(input.device)
+            input = torch.cat([cls_token, input], dim=1)
+        x = self.embedding(input)
+        if self.use_cls:
+            x[:, 0,:] = self.linear_cls(torch.ones_like(x[:, 0,:]).to(x.device))
+        x = self.pos_emb(x)
+        x = self.layernorm0(x)
+        batch_size, length, _ = x.size()
+        mask = torch.where(input == self.pad_idx, 0, 1).unsqueeze(1).repeat_interleave(length, 1)
+        x = self.l3encoder(x, mask)
+        return x
+
+# @click.command()
+# @click.option('--test-iterations', default=1000, type=int, help='Number of training iterations (batches) before testing')
+# @click.option('--epochs', default=50, help='Number of epochs.')
+# @click.option('--modeltype', required=True, type=int, help="0: base, 1 : Attention1, 2: Attention2")
+# @click.option('--emb-size', default=100, help='embeddings size')
+# @click.option('--batch-size', default=20, help='batch size')
 def main(epochs,test_iterations,modeltype,emb_size,batch_size):
+    conf = OmegaConf.load('./config/conf.yaml')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     word2id, embeddings, train_data, test_data = get_imdb_data(emb_size)
     nb_class = len(word2id)
@@ -412,35 +383,50 @@ def main(epochs,test_iterations,modeltype,emb_size,batch_size):
     #     return emb_layer(torch.nn.utils.rnn.pad_sequence(data, batch_first=True,padding_value = PAD)).to(device), torch.LongTensor(labels).to(device), torch.Tensor(lens).to(device)
     
     def collate(batch):
-        data = [torch.LongTensor(b[0]) for b in batch]
-        lens = [len(b[0]) for b in batch]
-        labels = [b[1] for b in batch]
-        return torch.nn.utils.rnn.pad_sequence(data, padding_value = PAD, batch_first=True), torch.LongTensor(lens), torch.LongTensor(labels)
-
-
+        """ Collate function for DataLoader """
+        data = [torch.LongTensor(item[0][:MAX_LENGTH]) for item in batch]
+        lens = [len(d) for d in data]
+        labels = [item[1] for item in batch]
+        return torch.nn.utils.rnn.pad_sequence(data, batch_first=True,padding_value = PAD), torch.LongTensor(labels)
 
     train_loader = DataLoader(train_data, shuffle=True,
                           batch_size=batch_size, collate_fn=collate)
     test_loader = DataLoader(test_data, batch_size=batch_size,collate_fn=collate,shuffle=False)
-    input,lens,label=next(iter(train_loader))
-    ##  TODO: 
-    if modeltype == 0: 
-        criterion = torch.nn.CrossEntropyLoss()
-        net = SimpleNet(weights_embeddings=embeddings,dim_h=100,criterion=criterion,device=device,opt='Adam')
-        # net = QueryNet(weights_embeddings=embeddings,dim_h=100,criterion=criterion,device=device,opt='Adam')
-        net.fit(train_loader,test_loader,lr= 0.005,n_epochs=10)
-    if modeltype == 1: 
-        criterion = torch.nn.CrossEntropyLoss()
-        net = BasicSelfAttentionModel(weights_embeddings=embeddings,criterion=criterion,device=device,opt='Adam')
-        net.fit(train_loader,test_loader,lr= 0.005,n_epochs=10)
-    if modeltype == 2 : 
-        criterion = torch.nn.CrossEntropyLoss()
-        net = SelfAttentionModel(weights_embeddings=embeddings,pad_idx =PAD,criterion=criterion,device=device,opt='Adam',use_cls=True)
-        net.fit(train_loader,test_loader,lr= 0.005,n_epochs=10)
     
+    ##  TODO: 
+    if modeltype == 0:
+        network = SimpleNet(weights_embeddings=embeddings,dim_h=100)
+        # network = QueryNet(weights_embeddings=embeddings,dim_h=100)
+        name = "BasicEncoder"
+    if modeltype == 1:
+        network = BasicSelfAttentionModel(qk_dim=conf.qk_dim,v_dim=conf.v_dim,out_dim=conf.out_dim,dim_emb=conf.dim_emb,class_dim=conf.class_dim,weights_embeddings=embeddings)
+        name = "BasicEncoder"
+    if modeltype == 2:
+        # network = AdvancedResEncoder(qk_dim=conf.qk_dim, v_dim=conf.v_dim, embedding_w=embeddings, max_len=conf.max_len, use_cls=conf.use_cls,
+            #  emb_freeze=conf.emb_freeze, pad_idx=PAD, out_dim=conf.out_dim, class_dim=conf.class_dim, dropout_prob=conf.dropout_prob)
+        network = SelfAttentionModel(qk_dim=conf.qk_dim,v_dim=conf.v_dim,out_dim=conf.out_dim,dim_emb=conf.dim_emb,class_dim=conf.class_dim,max_len= conf.max_len,weights_embeddings=embeddings,pad_idx =PAD,use_cls = True)
+        name = "AdvancedResEncoder"
+    model = LightningNetwork(name=name, network=network, learning_rate=0.001)
+
+    LOG_PATH = Path('./logs') 
+    checkpoint_callback = ModelCheckpoint(monitor="val_accuracy", mode='max')
+    logger = TensorBoardLogger(save_dir=LOG_PATH, name=model.name, version=time.asctime(), default_hp_metric=False)
+    trainer = pl.Trainer(gpus=1 if torch.cuda.is_available() else None,
+                        logger=logger,
+                        default_root_dir=LOG_PATH,
+                        max_epochs=10,
+                        callbacks=[checkpoint_callback])
+    
+    hyperparameters = conf
+    trainer.logger.log_hyperparams(hyperparameters)
+    trainer.fit(model, train_loader, test_loader)
+
+   
+
 
 
 if __name__ == "__main__":
-    main()
+    conf = OmegaConf.load('./config/conf.yaml')
+    main(epochs = 10,test_iterations=1000,modeltype=2,emb_size=50,batch_size=20)
 
 

@@ -1,0 +1,13 @@
+modeltype: 2
+epochs: 30
+dim_emb: 50
+v_dim: 128
+out_dim: 50
+qk_dim: 128
+batch_size: 128
+emb_freeze: True
+class_dim: 2
+dropout_prob: 0.1
+lr: 0.001
+max_len: 1000
+use_cls: True
