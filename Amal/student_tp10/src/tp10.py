@@ -286,85 +286,13 @@ class SelfAttentionModel(nn.Module):
 
 
         
-class ResidualEncoder(nn.Module):
-    def __init__(self,
-                 qk_dim,
-                 v_dim,
-                 embedding_dim,
-                 out_dim,
-                 class_dim,
-                 dropout_prob,
-                 use_cls = False) -> None:
-        super().__init__()
-        self.use_cls = use_cls
-        self.transformer1 = OneHeadAttention(qk_dim, v_dim, embedding_dim, out_dim)
-        self.layernorm1 = nn.LayerNorm(out_dim)
-        self.transformer2 = OneHeadAttention(qk_dim, v_dim, embedding_dim, out_dim)
-        self.layernorm2 = nn.LayerNorm(out_dim)
-        self.transformer3 = OneHeadAttention(qk_dim, v_dim, embedding_dim, out_dim)
-        self.layernorm3 = nn.LayerNorm(out_dim)
-        self.classif = nn.Linear(out_dim, class_dim)
-        self.dropout = nn.Dropout(dropout_prob)
-     
 
-    def forward(self, x):
-        x = self.layernorm1(x + self.dropout(self.transformer1(x)))
-        x = self.layernorm2(x + self.dropout(self.transformer2(x)))
-        x = self.layernorm3(x + self.dropout(self.transformer3(x)))
-        if self.use_cls:
-            x = x[:, 0, :]
-        else:
-            x = x.mean(dim=1)
-        x = self.classif(x)
-        return x
-
-class AdvancedResEncoder(nn.Module):
-    def __init__(self,
-                 qk_dim,
-                 v_dim,
-                 embedding_w,
-                 emb_freeze,
-                 pad_idx,
-                 out_dim,
-                 class_dim,
-                 dropout_prob,
-                 max_len,
-                 use_cls: Optional[bool] = None) -> None:
-        super().__init__()
-        dictionnary_size, embedding_dim = embedding_w.shape
-        embedding_w = torch.tensor(embedding_w).float()
-        dictionnary_size, embedding_dim = embedding_w.shape
-        self.pad_idx = pad_idx
-        self.cls_idx = pad_idx + 1 # we added cls_idx after pad_idx
-        self.use_cls = use_cls
-        self.embedding = nn.Embedding.from_pretrained(embeddings=embedding_w, padding_idx = self.pad_idx, freeze=emb_freeze)
-        self.l3encoder = ResidualEncoder(qk_dim, v_dim, embedding_dim, out_dim, class_dim, dropout_prob, use_cls=use_cls)
-        self.pos_emb = PositionalEncoding(embedding_dim, max_len=max_len)
-        self.layernorm0 = nn.LayerNorm(embedding_dim)
-        if self.use_cls:
-            self.linear_cls = nn.Linear(embedding_dim, embedding_dim)
-
-    def forward(self, input):
-        if self.use_cls:
-            batch_size, _ = input.size()
-            cls_token = (torch.ones(batch_size,1) * self.cls_idx).long().to(input.device)
-            input = torch.cat([cls_token, input], dim=1)
-        x = self.embedding(input)
-        if self.use_cls:
-            x[:, 0,:] = self.linear_cls(torch.ones_like(x[:, 0,:]).to(x.device))
-        x = self.pos_emb(x)
-        x = self.layernorm0(x)
-        batch_size, length, _ = x.size()
-        mask = torch.where(input == self.pad_idx, 0, 1).unsqueeze(1).repeat_interleave(length, 1)
-        x = self.l3encoder(x, mask)
-        return x
-
-# @click.command()
-# @click.option('--test-iterations', default=1000, type=int, help='Number of training iterations (batches) before testing')
-# @click.option('--epochs', default=50, help='Number of epochs.')
-# @click.option('--modeltype', required=True, type=int, help="0: base, 1 : Attention1, 2: Attention2")
-# @click.option('--emb-size', default=100, help='embeddings size')
-# @click.option('--batch-size', default=20, help='batch size')
+@click.command()
+@click.option('--test-iterations', default=1000, type=int, help='Number of training iterations (batches) before testing')
+@click.option('--epochs', default=50, help='Number of epochs.')
+@click.option('--modeltype', required=True, type=int, help="0: base, 1 : Attention1, 2: Attention2")
+@click.option('--emb-size', default=100, help='embeddings size')
+@click.option('--batch-size', default=20, help='batch size')
 def main(epochs,test_iterations,modeltype,emb_size,batch_size):
     conf = OmegaConf.load('./config/conf.yaml')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -427,6 +355,7 @@ def main(epochs,test_iterations,modeltype,emb_size,batch_size):
 
 if __name__ == "__main__":
     conf = OmegaConf.load('./config/conf.yaml')
-    main(epochs = 10,test_iterations=1000,modeltype=2,emb_size=50,batch_size=20)
+    # main(epochs = 10,test_iterations=1000,modeltype=2,emb_size=50,batch_size=20)
+    main()
 
 
