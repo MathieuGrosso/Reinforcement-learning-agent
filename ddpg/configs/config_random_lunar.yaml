@@ -1,0 +1,63 @@
+# env: Pendulum-v1
+# seed: 42
+# featExtractor: !!python/name:__main__.NothingToDo ''
+# freqSave: 1000
+# freqTest: 10
+# nbTest: 1
+# freqVerbose: 10
+# freqOptim: 1                                                                          # Optimisation de la politique tous les freqOptim evenements
+# fromFile: null
+# nbEpisodes: 1000000
+# maxLengthTest: 500                                                                    # Longueur maxi des trajectoires en Test
+# maxLengthTrain: 300 
+# a_low: -10
+# a_high: 10
+# eps_std: 0.02  # works for all 3 envs
+# lr_critic: 0.001
+# lr_actor: 0.0005
+# batch_size : 32
+# hidden_sizes_actor:
+#   - 128
+#   - 64
+# hidden_sizes_critic:
+#   - 128
+#   - 32
+# gamma: 0.99
+# batch_size: 1280
+# rho: 0.995
+# buffer_limit: 1000000 # 50000 worked for Pendulum and MountainCar, 1000000 worked for LunarLander
+# max_episodes: 15000
+# update_freq: 1  # number of episodes between each training epoch
+# update_iter: 10  # number of training steps inside each epoch
+
+
+seed: 42
+env :  Pendulum-v1
+#env_name: MountainCarContinuous-v0
+#env_name: LunarLanderContinuous-v2
+a_low: -10
+a_high: 10
+eps_std: 0.02  # works for all 3 envs
+lr_critic: 0.001
+lr_actor: 0.0005
+hidden_sizes_mu:
+  - 128
+  - 64
+hidden_sizes_q:
+  - 128
+  - 32
+gamma: 0.99
+batch_size: 64
+rho: 0.995
+buffer_limit: 50000  # 50000 worked for Pendulum and MountainCar, 1000000 worked for LunarLander
+max_episodes: 15000
+update_freq: 1  # number of episodes between each training epoch
+update_iter: 10
+nbEpisodes: 1000000
+maxLengthTest: 500                                                                    # Longueur maxi des trajectoires en Test
+maxLengthTrain: 300 
+freqTest: 10
+freqSave: 1000
+nbTest: 1
+featExtractor: !!python/name:__main__.NothingToDo 
+freqVerbose: 10
